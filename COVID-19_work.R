@@ -9,7 +9,10 @@ pkgs <- c(
   "gridExtra",## Libraries for Plotting our Results
   "tidyverse", # Library for data cleaning
   "caret",## Library for preprocessing, train, confusion matrix, and many other functions
-  "lubridate"
+  "lubridate",
+  "plotly",
+  "tidyr",
+  "leaflet"
   )
 missingpkgs <- lapply(pkgs, require, character.only = TRUE)
 missingpkgs <- unlist(missingpkgs)
@@ -20,7 +23,7 @@ if (sum(!missingpkgs)) {
 
 
 #Store URLs
-directory <- "~/R/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
+directory <- "~/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
 confirmed_URL <- paste0(directory,"Confirmed.csv")
   #"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv"
 deaths_URL <- paste0(directory,"Deaths.csv")
@@ -39,7 +42,7 @@ tidyConfirmedCases <- confirmedCases %>%
         mutate(Date = mdy(Date,tz="UTC"))%>%
         select(Date,Country.Region, everything())%>%
         arrange(Date,Country.Region,Province.State)%>%
-        rename(lat = Lat, )
+        rename(lat = Lat, lng = Long )
 
 #identify countries without provinces
 noProvinces <- tidyConfirmedCases$Province.State==""
@@ -69,10 +72,34 @@ currentCumulativeTotal %>%
                 color = "red",
                 radius = 2*log(currentCumulativeTotal$cumulativeCases),
                 #clusterOptions = markerClusterOptions(), 
-                popup = currentCumulativeTotal$Province.State
+                popup = paste(currentCumulativeTotal$Province.State, "<br>",
+                          "Confirmed Cases:",currentCumulativeTotal$cumulativeCases)
                 )# %>%
 
 #Code for adding a date to the map
 #        addCircleMarkers(lat = 75, lng = -120, label = today(),
 #                   markerOptions(opacity = .001, radius = .01),
 #                   labelOptions = labelOptions(noHide = T, textsize = "12px"))
+
+#Create a Growth Chart
+nationalConfirmedCases <- tidyConfirmedCases %>%
+        group_by(Country.Region,Date)%>%
+        summarise(
+          cumulativeCases = sum(cumulativeCases)#,
+          #Date = ymd(mode(Date))#%>%
+        )%>%
+        select(Date,Country.Region, everything())%>%
+        arrange(Date,Country.Region)
+
+
+fig <- plot_ly(nationalConfirmedCases, x = ~Date,
+        y = ~cumulativeCases, 
+        color = ~Country.Region,
+        type = "scatter",
+        mode = "lines"
+        )%>%
+        layout(title = 'Confirmed Cases of COVID-19 per Country Over Time')
+fig 
+        
+
+
