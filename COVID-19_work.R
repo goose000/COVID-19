@@ -12,7 +12,9 @@ pkgs <- c(
   "lubridate",
   "plotly",
   "tidyr",
-  "leaflet"
+  "leaflet",
+  "httr",
+  "readr"
   )
 missingpkgs <- lapply(pkgs, require, character.only = TRUE)
 missingpkgs <- unlist(missingpkgs)
@@ -24,56 +26,110 @@ if (sum(!missingpkgs)) {
 
 #Store URLs
 directory <- "~/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
-confirmed_URL <- paste0(directory,"Confirmed.csv")
-  #"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv"
-deaths_URL <- paste0(directory,"Deaths.csv")
-  #"https://github.com/CSSEGISandData/COVID-19/blob/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv"
-recovered_URL <- paste0(directory,"Recovered.csv")
-  #"https://github.com/CSSEGISandData/COVID-19/blob/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv"
+ #paste0(directory,"Confirmed.csv")
+confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv"
+ #paste0(directory,"Deaths.csv")
+deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv"
+  #paste0(directory,"Recovered.csv")
+recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv"
 
 #Load Data
-confirmedCases <- read.csv(confirmed_URL)
-deaths <- read.csv(deaths_URL)
-recovered <- read.csv(recovered_URL)
+confirmedCases <- read_csv(url(confirmed_URL))
+deaths <- read_csv(url(deaths_URL))
+recovered <- read_csv(url(recovered_URL))
 
+#Reshape the dataframe, clean up names, reorder variables and observations
 tidyConfirmedCases <- confirmedCases %>%
-        pivot_longer(-c(Province.State, Country.Region, Lat, Long), names_to = "Date", values_to = "cumulativeCases") %>%
-        mutate(Date = substring(Date, 2))%>%
+        rename(provinceState = `Province/State`, countryRegion = `Country/Region`) %>%
+        pivot_longer(-c(provinceState, countryRegion, Lat, Long), 
+                     names_to = "Date", values_to = "cumulativeCases") %>%
         mutate(Date = mdy(Date,tz="UTC"))%>%
-        select(Date,Country.Region, everything())%>%
-        arrange(Date,Country.Region,Province.State)%>%
-        rename(lat = Lat, lng = Long )
+        select(Date,countryRegion, everything())%>%
+        arrange(Date,countryRegion,provinceState)%>%
+        rename(latitude = Lat, longitude = Long )
+
+#Repeat Everything for Deaths and Recovered
+tidyDeaths <- deaths %>%
+        rename(provinceState = `Province/State`, countryRegion = `Country/Region`) %>%
+        pivot_longer(-c(provinceState, countryRegion, Lat, Long), 
+                     names_to = "Date", values_to = "deaths") %>%
+        mutate(Date = mdy(Date,tz="UTC"))%>%
+        select(Date,countryRegion, everything())%>%
+        arrange(Date,countryRegion,provinceState)%>%
+        rename(latitude = Lat, longitude = Long )
+
+tidyRecovered <- recovered %>%
+        rename(provinceState = `Province/State`, countryRegion = `Country/Region`) %>%
+        pivot_longer(-c(provinceState, countryRegion, Lat, Long), 
+                     names_to = "Date", values_to = "recovered") %>%
+        mutate(Date = mdy(Date,tz="UTC"))%>%
+        select(Date,countryRegion, everything())%>%
+        arrange(Date,countryRegion,provinceState)%>%
+        rename(latitude = Lat, longitude = Long )
+
+#Merge Dataframes
+masterDF <- tidyConfirmedCases %>%
+        merge(tidyDeaths) %>%
+        merge(tidyRecovered)
 
 #identify countries without provinces
-noProvinces <- tidyConfirmedCases$Province.State==""
+noProvinces <- is.na(masterDF$provinceState)
 
-#convert provinces to character for ease of replacement
-tidyConfirmedCases$Province.State <- tidyConfirmedCases$Province.State %>%
-        as.character() 
- 
 #Replace empty province entries with country names       
-tidyConfirmedCases$Province.State[noProvinces]<-tidyConfirmedCases$Country.Region[noProvinces]%>%
-        as.character()
-
-#Convert Province back to factor
-tidyConfirmedCases$Province.State <- tidyConfirmedCases$Province.State %>%
+masterDF$provinceState[noProvinces]<-masterDF$countryRegion[noProvinces]
+       
+#Convert Province and Country to factor
+masterDF$provinceState <- masterDF$provinceState %>%
+        as.factor()
+masterDF$countryRegion <- masterDF$countryRegion %>%
         as.factor()
 
+#Remove missing data (important for when case numbers have not yet updated)
+masterDF <- masterDF[complete.cases(masterDF),]
+
+#Create Active Cases Variable
+masterDF <- masterDF %>%
+        mutate(activeCases = cumulativeCases - recovered)
+
+#Create New Cases Variable
+masterDF <- masterDF %>%
+        group_by(provinceState) %>%
+        mutate(newCases = cumulativeCases - lag(cumulativeCases, default = 0))
+
+#Create Growth Variable
+masterDF <- masterDF %>%
+        mutate(caseGrowth = ifelse(activeCases>0,newCases/activeCases,0))
+
+#Create a smoothed Growth Variable
+masterDF <- masterDF %>%
+        mutate(smoothGrowth = smooth(caseGrowth))
+
+#Create a factor for the level of growth
+masterDF <- masterDF %>%
+        mutate(growthCat = cut(smoothGrowth, breaks = c(Inf, .2, 0, -Inf), 
+                                 labels = c("High", "Low", "Decay")))
+
 #Identify cumulative cases as of most recent download
-current <- max(tidyConfirmedCases$Date)
-currentCumulativeTotal <- filter(tidyConfirmedCases,Date==current)
+current <- max(masterDF$Date)
+currentCumulativeTotal <- filter(masterDF,Date==current)
+pal <- colorFactor(palette = c("green", "yellow", "red"), 
+                   domain= currentCumulativeTotal$growthCat)
 
 #Create interactive map
+
 currentCumulativeTotal %>%
         leaflet() %>%
         addTiles() %>%
         addCircleMarkers(
                 weight = 1,
-                color = "red",
+                color = ~pal(growthCat),
                 radius = 2*log(currentCumulativeTotal$cumulativeCases),
                 #clusterOptions = markerClusterOptions(), 
-                popup = paste(currentCumulativeTotal$Province.State, "<br>",
-                          "Confirmed Cases:",currentCumulativeTotal$cumulativeCases)
+                popup = paste(currentCumulativeTotal$provinceState, "<br>",
+                          "Confirmed Cases:",currentCumulativeTotal$cumulativeCases, "<br>",
+                          "Deaths:",currentCumulativeTotal$deaths, "<br>",
+                          "Recovered:",currentCumulativeTotal$recovered
+                          )
                 )# %>%
 
 #Code for adding a date to the map
@@ -81,20 +137,20 @@ currentCumulativeTotal %>%
 #                   markerOptions(opacity = .001, radius = .01),
 #                   labelOptions = labelOptions(noHide = T, textsize = "12px"))
 
-#Create a Growth Chart
-nationalConfirmedCases <- tidyConfirmedCases %>%
-        group_by(Country.Region,Date)%>%
+#Aggregate Data
+nationalCases <- masterDF %>%
+        group_by(countryRegion,Date)%>%
         summarise(
-          cumulativeCases = sum(cumulativeCases)#,
-          #Date = ymd(mode(Date))#%>%
+          cumulativeCases = sum(cumulativeCases),
+          activeCases = sum(activeCases)
         )%>%
-        select(Date,Country.Region, everything())%>%
-        arrange(Date,Country.Region)
+        select(Date,countryRegion, everything())%>%
+        arrange(Date,countryRegion)
 
-
-fig <- plot_ly(nationalConfirmedCases, x = ~Date,
+#Create a Growth Chart
+fig <- plot_ly(nationalCases, x = ~Date,
         y = ~cumulativeCases, 
-        color = ~Country.Region,
+        color = ~countryRegion,
         type = "scatter",
         mode = "lines"
         )%>%
@@ -102,4 +158,26 @@ fig <- plot_ly(nationalConfirmedCases, x = ~Date,
 fig 
         
 
+#Create an Active Cases Chart
 
+
+fig <- plot_ly(nationalCases, x = ~Date,
+               y = ~activeCases, 
+               color = ~countryRegion,
+               type = "scatter",
+               mode = "lines"
+)%>%
+        layout(title = 'Active Cases of COVID-19 per Country Over Time')
+fig 
+
+#Create a Growth Chart
+fig <- plot_ly(masterDF, x = ~Date,
+               y = ~smoothGrowth, 
+               color = ~provinceState,
+               type = "scatter",
+               mode = "lines"
+)%>%
+        layout(title = 'Growth in Cases of COVID-19 per Country Over Time')
+fig 
+
+      
