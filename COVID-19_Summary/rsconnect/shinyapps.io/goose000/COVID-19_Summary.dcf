@@ -1,0 +1,12 @@
+name: COVID-19_Summary
+title: COVID-19_Summary
+username:
+account: goose000
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 1989195
+bundleId: 2925019
+url: https://goose000.shinyapps.io/COVID-19_Summary/
+when: 1585177235.5835
+asMultiple: FALSE
+asStatic: FALSE

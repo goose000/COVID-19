@@ -1,0 +1,6 @@
+COVID-19 Summary Documentation
+The COVID-19 Summary App displays two things to the user:
+        An interactive plot of total confirmed cases of COVID-19 for each country.
+        An interactive map showing a summary of date specific data for a given country/state/province.
+The interactive plot defaults to showing the five worst countries as of the most current download (data is downloaded fresh from the Johns Hopkins github every time the app is run), but it has a user interface which allows the user to select any combination of countries to display.
+The interactive map defaults to the most recent data, but has a slider which allows the user to look at case data from a given date and an animation button which allows the user to watch the case data change over time. The size of the circle markers are proportional to the log of the total cases, and when clicked, the markers will show total cases, deaths, and the number recovered.
