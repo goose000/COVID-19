@@ -16,16 +16,17 @@ library(plotly)
 library(leaflet)
 library(httr)
 
-
+reverse = function(x) sort(x, decreasing = TRUE)
 
 #Store URLs
 directory <- "~/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
 #paste0(directory,"Confirmed.csv")
-confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv"
+confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
 #paste0(directory,"Deaths.csv")
-deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv"
+deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
 #paste0(directory,"Recovered.csv")
-recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv"
+recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_recovered_global.csv"
+
 
 #Load Data
 confirmedCases <- read_csv(url(confirmed_URL))
@@ -78,12 +79,15 @@ masterDF$provinceState <- masterDF$provinceState %>%
 masterDF$countryRegion <- masterDF$countryRegion %>%
         as.factor()
 
+#Adjust for missing recovered Data
+
+
 #Remove missing data (important for when case numbers have not yet updated)
 masterDF <- masterDF[complete.cases(masterDF),]
 
 #Create Active Cases Variable
 masterDF <- masterDF %>%
-        mutate(activeCases = cumulativeCases - recovered)
+        mutate(activeCases = cumulativeCases - recovered - deaths)
 
 #Create New Cases Variable
 masterDF <- masterDF %>%
@@ -92,7 +96,7 @@ masterDF <- masterDF %>%
 
 #Create Growth Variable
 masterDF <- masterDF %>%
-        mutate(caseGrowth = ifelse(activeCases>0,newCases/activeCases,0))
+        mutate(caseGrowth = ifelse(activeCases>0,(newCases-deaths-recovered)/activeCases,0))
 
 #Create a smoothed Growth Variable
 masterDF <- masterDF %>%
@@ -102,13 +106,15 @@ masterDF <- masterDF %>%
 masterDF <- masterDF %>%
         mutate(growthCat = cut(smoothGrowth, breaks = c(Inf, .2, 0, -Inf), 
                                labels = c("High", "Low", "Decay")))
+        
 
 #Aggregate Data
 nationalCases <- masterDF %>%
         group_by(countryRegion,Date)%>%
         summarise(
                 cumulativeCases = sum(cumulativeCases),
-                activeCases = sum(activeCases)
+                activeCases = sum(activeCases),
+                smoothGrowth = mean(smoothGrowth)
         )%>%
         select(Date,countryRegion, everything())%>%
         arrange(Date,countryRegion)
@@ -128,8 +134,9 @@ countries <- levels(nationalCases$countryRegion)
 start <- nationalCases$Date[1]
 step <- as.POSIXct(today()) - as.POSIXct(today()-1)
 
-pal <- colorFactor(palette = c("green", "yellow", "red"), 
-                   domain= masterDF$growthCat)
+pal <- colorNumeric(palette = c("RdYlGn"), 
+                   domain= c(0,1), reverse = F)
+
 
 
 library(shiny)
@@ -154,8 +161,8 @@ ui <- fluidPage(
                         sliderInput("Date",
                                     "as of",
                                     min = start,
-                                    max = as.POSIXct(today()),
-                                    value = current,
+                                    max = current,
+                                    value = start,
                                     step = step,
                                     round = T,
                                     animate = T,
@@ -165,8 +172,13 @@ ui <- fluidPage(
                 ),
                 # Show a plot of the generated distribution
                 mainPanel(
-                        plotlyOutput("Plot1"),
-                        leafletOutput("Plot2")
+                        tabsetPanel(type = "tabs",
+                                tabPanel("Active Plot", plotlyOutput("Plot1")),
+                                tabPanel("Cumulative Plot", plotlyOutput("Plot2")),
+                                tabPanel("Growth Rate Plot", plotlyOutput("Plot3")),
+                                tabPanel("Map", leafletOutput("Map"))
+                        ),
+                        h5('Code to create this app will be uploaded to my github at https://github.com/goose000/COVID-19. Please let me know of any issues with the app, or any suggestions you have for further improvement. Coming soon: US focused map and charts. (JHU CSSE changed their data structure, so this aspect was lost from the current map until I rework the data.)')
                 )
         )
 )
@@ -174,7 +186,7 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output) {
    
-        #Create a Growth Chart
+        #Create an Active Cases Chart
         selectedConfirmedCases <- reactive({
                 nationalCases %>%
                         filter(countryRegion %in% input$countrySelect) #%>% 
@@ -189,8 +201,46 @@ server <- function(input, output) {
                         type = "scatter",
                         mode = "lines"
                 )%>%
-                        layout(title = 'Active Cases of COVID-19 per Country Over Time')
+                        layout(title = 'Active Confirmed Cases of COVID-19 per Country Over Time')
                 plot1
+        })
+        
+        #Create an Cumulative Cases Chart
+        selectedConfirmedCases <- reactive({
+                nationalCases %>%
+                        filter(countryRegion %in% input$countrySelect) #%>% 
+        })
+        
+        output$Plot2 <- renderPlotly({
+                plot2 <- plot_ly(
+                        selectedConfirmedCases(), 
+                        x = ~Date,
+                        y = ~cumulativeCases, 
+                        color = ~countryRegion,
+                        type = "scatter",
+                        mode = "lines"
+                )%>%
+                        layout(title = 'Cumulative Confirmed Cases of COVID-19 per Country Over Time')
+                plot2
+        })
+        
+        #Create a Growth Chart
+        selectedConfirmedCases <- reactive({
+                nationalCases %>%
+                        filter(countryRegion %in% input$countrySelect) #%>% 
+        })
+        
+        output$Plot3 <- renderPlotly({
+                plot3 <- plot_ly(
+                        selectedConfirmedCases(), 
+                        x = ~Date,
+                        y = ~smoothGrowth, 
+                        color = ~countryRegion,
+                        type = "scatter",
+                        mode = "lines"
+                )%>%
+                        layout(title = 'Growth Rate of COVID-19 per Country Over Time')
+                plot3
         })
         
         #Create interactive map
@@ -198,13 +248,13 @@ server <- function(input, output) {
                 filter(masterDF,Date==input$Date)
         })
 
-        output$Plot2 <- renderLeaflet({
+        output$Map <- renderLeaflet({
                 plot2 <- selectedCumulativeTotal() %>%
                         leaflet() %>%
                         addTiles() %>%
                         addCircleMarkers(
                                 weight = 1,
-                                color = ~pal(selectedCumulativeTotal()$growthCat),
+                                color = ~pal(selectedCumulativeTotal()$smoothGrowth),
                                 radius = 2*log(selectedCumulativeTotal()$activeCases),
                                 #clusterOptions = markerClusterOptions(), 
                                 popup = paste(selectedCumulativeTotal()$provinceState, "<br>",
@@ -212,9 +262,12 @@ server <- function(input, output) {
                                               "Deaths:",selectedCumulativeTotal()$deaths, "<br>",
                                               "Recovered:",selectedCumulativeTotal()$recovered
                                 )
-                        )%>%
-                        addLegend(labels = c('No Growth', '0-20% Growth Rate', '>20% Growth Rate'),
-                                  colors = c('green', 'yellow', 'red'))
+                        )#%>%
+                        #addLegend(pal = pal, 
+                        #          values = ~selectedCumulativeTotal()$smoothGrowth,
+                        #          title = "Daily Growth Rate",
+                        #          opacity = 1
+                        #          )
                 
         })
 }
