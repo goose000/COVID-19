@@ -28,11 +28,10 @@ if (sum(!missingpkgs)) {
 directory <- "~/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
  #paste0(directory,"Confirmed.csv")
 confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
-
- #paste0(directory,"Deaths.csv")
+#paste0(directory,"Deaths.csv")
 deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
-  #paste0(directory,"Recovered.csv")
-recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv"
+#paste0(directory,"Recovered.csv")
+recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_recovered_global.csv"
 
 #Load Data
 confirmedCases <- read_csv(url(confirmed_URL))
@@ -67,11 +66,19 @@ tidyRecovered <- recovered %>%
         select(Date,countryRegion, everything())%>%
         arrange(Date,countryRegion,provinceState)%>%
         rename(latitude = Lat, longitude = Long )
+        
+
 
 #Merge Dataframes
 masterDF <- tidyConfirmedCases %>%
         merge(tidyDeaths) %>%
-        merge(tidyRecovered)
+        merge(tidyRecovered, all = T) %>%
+        group_by(provinceState) #%>%
+
+#Replace NA with previous values
+naRows <- is.na(masterDF$recovered)
+masterDF$recovered[naRows] <- lag(masterDF$recovered, default = 0)[naRows]        
+
 
 #identify countries without provinces
 noProvinces <- is.na(masterDF$provinceState)
@@ -94,7 +101,7 @@ masterDF <- masterDF %>%
 
 #Create New Cases Variable
 masterDF <- masterDF %>%
-        group_by(provinceState) %>%
+        #group_by(provinceState) %>%  #moved to merge section
         mutate(newCases = cumulativeCases - lag(cumulativeCases, default = 0))
 
 #Create Growth Variable
