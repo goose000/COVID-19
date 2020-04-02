@@ -14,7 +14,8 @@ pkgs <- c(
   "tidyr",
   "leaflet",
   "httr",
-  "readr"
+  "readr",
+  "pracma"
   )
 missingpkgs <- lapply(pkgs, require, character.only = TRUE)
 missingpkgs <- unlist(missingpkgs)
@@ -27,16 +28,33 @@ if (sum(!missingpkgs)) {
 #Store URLs
 directory <- "~/COVID-19-master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-"
  #paste0(directory,"Confirmed.csv")
-confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+global_confirmed_URL <-  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
 #paste0(directory,"Deaths.csv")
-deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
+global_deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
 #paste0(directory,"Recovered.csv")
-recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_recovered_global.csv"
+global_recovered_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_recovered_global.csv"
+
+US_confirmed_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+
+
+US_deaths_URL <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+
+#Open Connections
+globalConfirmedCon <- url(global_confirmed_URL)
+globalDeathsCon <- url(global_deaths_URL)
+globalRecoveredCon <- url(global_recovered_URL)
+USConfirmedCon <- url(US_confirmed_URL)
+USDeathsCon <- url(US_deaths_URL)
 
 #Load Data
-confirmedCases <- read_csv(url(confirmed_URL))
-deaths <- read_csv(url(deaths_URL))
-recovered <- read_csv(url(recovered_URL))
+confirmedCases <- read_csv(globalConfirmedCon)
+recovered <- read_csv(globalDeathsCon)
+deaths <- read_csv(globalRecoveredCon)
+USConfirmedCases <- read_csv(USConfirmedCon)
+USDeaths <- read_csv(USDeathsCon)
+
+#Close Connections
+close(globalConfirmedCon, globalDeathsCon, globalRecoveredCon, USConfirmedCon, USDeathsCon)
 
 #Reshape the dataframe, clean up names, reorder variables and observations
 tidyConfirmedCases <- confirmedCases %>%
@@ -45,18 +63,16 @@ tidyConfirmedCases <- confirmedCases %>%
                      names_to = "Date", values_to = "cumulativeCases") %>%
         mutate(Date = mdy(Date,tz="UTC"))%>%
         select(Date,countryRegion, everything())%>%
-        arrange(Date,countryRegion,provinceState)%>%
-        rename(latitude = Lat, longitude = Long )
+        arrange(Date,countryRegion,provinceState)
 
-#Repeat Everything for Deaths and Recovered
+#Repeat Everything for Deaths and Recovered, and US Data
 tidyDeaths <- deaths %>%
         rename(provinceState = `Province/State`, countryRegion = `Country/Region`) %>%
         pivot_longer(-c(provinceState, countryRegion, Lat, Long), 
                      names_to = "Date", values_to = "deaths") %>%
         mutate(Date = mdy(Date,tz="UTC"))%>%
         select(Date,countryRegion, everything())%>%
-        arrange(Date,countryRegion,provinceState)%>%
-        rename(latitude = Lat, longitude = Long )
+        arrange(Date,countryRegion,provinceState)
 
 tidyRecovered <- recovered %>%
         rename(provinceState = `Province/State`, countryRegion = `Country/Region`) %>%
@@ -64,63 +80,88 @@ tidyRecovered <- recovered %>%
                      names_to = "Date", values_to = "recovered") %>%
         mutate(Date = mdy(Date,tz="UTC"))%>%
         select(Date,countryRegion, everything())%>%
-        arrange(Date,countryRegion,provinceState)%>%
-        rename(latitude = Lat, longitude = Long )
+        arrange(Date,countryRegion,provinceState)
+
+tidyUSConfirmed <- USConfirmedCases %>%
+        rename(county = Admin2, provinceState = Province_State, 
+               countryRegion = Country_Region, Long = Long_, combinedKey = Combined_Key) %>%
+        select(-c(UID, iso3, code3, FIPS)) %>%
+        pivot_longer(-c(iso2, county, provinceState, countryRegion, Lat, Long, combinedKey), 
+                     names_to = "Date", values_to = "cumulativeCases") %>%
+        mutate(Date = mdy(Date,tz="UTC"))%>%
+        select(Date,countryRegion, provinceState, county, everything())%>%
+        arrange(Date, countryRegion, provinceState, county)
         
+tidyUSDeaths <- USDeaths %>%
+        rename(county = Admin2, provinceState = Province_State, 
+               countryRegion = Country_Region, Long = Long_, combinedKey = Combined_Key) %>%
+        select(-c(UID, iso3, code3, FIPS)) %>%
+        pivot_longer(-c(iso2, county, provinceState, countryRegion, Lat, Long, 
+                        combinedKey, Population), 
+                     names_to = "Date", values_to = "deaths") %>%
+        mutate(Date = mdy(Date,tz="UTC"))%>%
+        select(Date,countryRegion, provinceState, county, everything())%>%
+        arrange(Date, countryRegion, provinceState, county)
 
+#Merge US Dataframes
+usDF <- tidyUSConfirmed %>%
+        merge(tidyUSDeaths, all = T)
 
-#Merge Dataframes
-masterDF <- tidyConfirmedCases %>%
+#Merge Global Dataframes
+globalDF <- tidyConfirmedCases %>%
         merge(tidyDeaths) %>%
         merge(tidyRecovered, all = T) %>%
-        group_by(provinceState) #%>%
-
-#Replace NA with previous values
-naRows <- is.na(masterDF$recovered)
-masterDF$recovered[naRows] <- lag(masterDF$recovered, default = 0)[naRows]        
-
+        unite(combinedKey, provinceState, countryRegion, sep = ", ", na.rm = T) %>%
+        merge(usDF, all = T) %>%
+        group_by(combinedKey)
+        
 
 #identify countries without provinces
-noProvinces <- is.na(masterDF$provinceState)
+noProvinces <- is.na(globalDF$provinceState)
 
 #Replace empty province entries with country names       
-masterDF$provinceState[noProvinces]<-masterDF$countryRegion[noProvinces]
+globalDF$provinceState[noProvinces]<-globalDF$countryRegion[noProvinces]
        
+#Replace NA with previous values
+naRows <- is.na(globalDF$recovered)
+globalDF$recovered[naRows] <- 0#lag(globalDF$recovered, default = 0)[naRows]        
+
+
 #Convert Province and Country to factor
-masterDF$provinceState <- masterDF$provinceState %>%
+globalDF$provinceState <- globalDF$provinceState %>%
         as.factor()
-masterDF$countryRegion <- masterDF$countryRegion %>%
+globalDF$countryRegion <- globalDF$countryRegion %>%
         as.factor()
 
 #Remove missing data (important for when case numbers have not yet updated)
-masterDF <- masterDF[complete.cases(masterDF),]
+#globalDF <- globalDF[complete.cases(globalDF),]
 
 #Create Active Cases Variable
-masterDF <- masterDF %>%
-        mutate(activeCases = cumulativeCases - recovered)
+globalDF <- globalDF %>%
+        mutate(activeCases = cumulativeCases - recovered - deaths)
 
 #Create New Cases Variable
-masterDF <- masterDF %>%
-        #group_by(provinceState) %>%  #moved to merge section
+globalDF <- globalDF %>%
         mutate(newCases = cumulativeCases - lag(cumulativeCases, default = 0))
 
 #Create Growth Variable
-masterDF <- masterDF %>%
-        mutate(caseGrowth = ifelse(activeCases>0,newCases/activeCases,0))
+globalDF <- globalDF %>%
+        mutate(caseGrowth = ifelse(activeCases>0,(newCases-deaths-recovered)/activeCases,0))
 
 #Create a smoothed Growth Variable
-masterDF <- masterDF %>%
-        mutate(smoothGrowth = smooth(caseGrowth))
+globalDF <- globalDF %>%
+        mutate(smoothGrowth = movavg(caseGrowth,5,"e"))
 
 #Create a factor for the level of growth
-masterDF <- masterDF %>%
-        mutate(growthCat = cut(smoothGrowth, breaks = c(Inf, .2, 0, -Inf), 
-                                 labels = c("High", "Low", "Decay")))
+globalDF <- globalDF %>%
+        mutate(growthCat = cut(smoothGrowth, breaks = c(-Inf, 0, .05, .1, .2, .25, Inf), 
+                                 labels = c("None/Decay", "Low", "M-Low", "Medium", "M-High", "High"),
+                               ordered_result = T))
 
 #Identify cumulative cases as of most recent download
-current <- max(masterDF$Date)
-currentCumulativeTotal <- filter(masterDF,Date==current)
-pal <- colorFactor(palette = c("green", "yellow", "red"), 
+current <- max(globalDF$Date)
+currentCumulativeTotal <- filter(globalDF,Date==current)
+pal <- colorFactor(palette = c("green", "yellowgreen", "yellow", "orange", "red", "red4"), 
                    domain= currentCumulativeTotal$growthCat)
 
 #Create interactive map
@@ -146,7 +187,7 @@ currentCumulativeTotal %>%
 #                   labelOptions = labelOptions(noHide = T, textsize = "12px"))
 
 #Aggregate Data
-nationalCases <- masterDF %>%
+nationalCases <- globalDF %>%
         group_by(countryRegion,Date)%>%
         summarise(
           cumulativeCases = sum(cumulativeCases),
@@ -179,7 +220,7 @@ fig <- plot_ly(nationalCases, x = ~Date,
 fig 
 
 #Create a Growth Chart
-fig <- plot_ly(masterDF, x = ~Date,
+fig <- plot_ly(globalDF, x = ~Date,
                y = ~smoothGrowth, 
                color = ~provinceState,
                type = "scatter",
